@@ -8,6 +8,8 @@ type alpi = Par of alpi*alpi
 	    |New of id *alpi
 	    |Emp
 
+let output_file = ref ""
+
 let rec bangs_first p =
   match p with
     |BInp (a, x, pa) -> Inp(a, x, Par(BInp (a, x, pa), pa))
@@ -40,7 +42,9 @@ let rec translate st =
 	  let nb1 = try String.index st '.'
 	  with Not_found -> 0 in
 	    if (nb1 = 0) then
-   	      BInp ((String.sub st 1 (nb-1)), (String.sub st (nb+1) (len-nb-2)), Emp)
+   	      BInp
+                ((String.sub st 1 (nb-1)), (String.sub st (nb+1) (len-nb-2)),
+                 Emp)
 	    else
 	      BInp ((String.sub st 1 (nb-1)), (String.sub st (nb+1) (nb1-nb-2)),
 		   (translate (String.sub st (nb1+1) (len-nb1-1))))
@@ -54,7 +58,8 @@ let rec translate st =
 	      Inp ((String.sub st 0 nb), (String.sub st (nb+1) (nb1-nb-2)),
 		   (translate (String.sub st (nb1+1) (len-nb1-1))))
 
-(* each id newly created has associated a number, a process id and a function for its next process*)
+(* each id newly created has associated a number, a process id
+   and a function for its next process*)
 
 let print_comma outc ls =
   let nb = List.length ls in
@@ -72,79 +77,100 @@ let rec write_forevers outc p ls width depth ls_n =
        with Not_found -> ("x", -1) in
        let _ =
 	 if (nb = -1) then
-	 (*if the process is not in the list then is given as argument and it's in the list ls_n *)
+	 (*if the process is not in the list then is given as argument
+           and it's in the list ls_n *)
 	   let (_, nb_n) = List.find (fun (pa, _)-> pa = a) ls_n in
-	     Printf.fprintf outc "V%s = get(%d), ( V%s ! {input, V%s, f%d%d})" a nb_n a a width depth
-	 else Printf.fprintf outc "(p%d ! {input, p%d, f%d%d}) " nb nb width depth in
+	     Printf.fprintf outc "V%s = get(%d), ( V%s ! {input, V%s, f%d%d})"
+                            a nb_n a a width depth
+	 else Printf.fprintf outc "(p%d ! {input, p%d, f%d%d}) "
+                             nb nb width depth in
 	 Printf.fprintf outc ", forever%d%d() .\n" width depth
 
     | _ -> Printf.fprintf outc ""
 
 (* elements of ls = (process_name, number, argument, arg_renamed) *)
 (* if inp or out before creating the name - error *)
-let rec parse outc p ls depth width ls_n=
+let rec parse outc p ls depth width ls_n =
   match p with
-    |New (a, pa) ->
-       let nb = print_comma outc ls in
-       let () = Printf.fprintf outc "register(p%d, spawn(b, channel, [0, 0]))" nb in
-	 parse outc pa ((a, nb)::ls) depth width ls_n
-    |Par (pa, pb) -> parse outc pb (parse outc pa ls depth width ls_n) depth (width+1) ls_n
+  |New (a, pa) ->
+    let nb = print_comma outc ls in
+    let () = Printf.fprintf
+               outc "register(p%d, spawn(chan, channel, [0, 0]))" nb in
+    parse outc pa ((a, nb)::ls) depth width ls_n
 
-    |Inp (a, x, pb) ->
-       let _ = print_comma outc ls in
-       let (_, nb) = try List.find (fun (pa, _)-> pa = a) ls
-       with Not_found -> ("x", -1) in
-       let _ = if (nb = -1) then
-	   (*if the process is not in the list then is given as argument and it's in the list ls_n *)
-	 let (_, nb_n) = List.find (fun (pa, _)-> pa = a) ls_n in
-	   Printf.fprintf outc "V%s = get(%d), ( V%s ! {input, V%s, f%d%d})" a nb_n a a width depth
-       else Printf.fprintf outc "(p%d ! {input, p%d, f%d%d}) " nb nb width depth in
-	   ls
+  |Par (pa, pb) ->
+    parse outc pb (parse outc pa ls depth width ls_n) depth (width+1) ls_n
 
-    |BInp (a, x, pb) ->
-       let _ = print_comma outc ls in
-       let () = Printf.fprintf outc "D = get(), spawn (b, beforeforever, [forever%d%d, D]) "  width depth in
-	 ls
+  |Inp (a, x, pb) ->
+    let _ = print_comma outc ls in
+    let (_, nb) =
+      try List.find (fun (pa, _)-> pa = a) ls
+      with Not_found -> ("x", -1) in
+    let () =
+      if (nb = -1) then
+	(*if the process is not in the list then is given as argument
+          and it's in the list ls_n *)
+	let (_, nb_n) = List.find (fun (pa, _)-> pa = a) ls_n in
+	Printf.fprintf
+          outc "V%s = get(%d), ( V%s ! {input, V%s, f%d%d})"
+          a nb_n a a width depth
+      else
+        Printf.fprintf
+          outc "(p%d ! {input, p%d, {%s, f%d%d}}) "
+          nb nb !output_file width depth in
+    ls
 
-    |Out (a, x) ->
-       let _ = print_comma outc ls in
-       (*** x *)
-       let (_, nb_x)= try List.find (fun (pa, _)-> pa = x) ls
-       with Not_found -> ("x", -1) in
-       let (_, nb_xn) = try List.find (fun (pa, _)-> pa = x) ls_n
-       with Not_found -> ("x", -1) in
-       let _ =  if (nb_x = -1) then
-	 if (nb_xn = -1) then Printf.fprintf outc ""
-	 else  Printf.fprintf outc " V%s = get(%d)," x nb_xn
-       else Printf.fprintf outc "" in
+  |BInp (a, x, pb) ->
+    let _ = print_comma outc ls in
+    let () = Printf.fprintf
+               outc "D = get(), spawn (b, beforeforever, [forever%d%d, D]) "
+               width depth in
+    ls
 
-	 (*** a *)
-       let (_, nb)= try List.find (fun (pa, _)-> pa = a) ls
-       with Not_found -> ("x", -1) in
-       let _ = if (nb = -1) then
-	 (*if the a is not in the list then is given as argument and it's in the list ls_n *)
-	 let (_, nb_n) = List.find (fun (pa, _)-> pa = a) ls_n in
-	   Printf.fprintf outc "V%s = get(%d), ( V%s ! {output,"  a nb_n a
-       else Printf.fprintf outc "(p%d ! {output," nb in
+  |Out (a, x) ->
+    let _ = print_comma outc ls in
+    (*** x *)
+    let (_, nb_x)=
+      try List.find (fun (pa, _)-> pa = x) ls
+      with Not_found -> ("x", -1) in
+    let (_, nb_xn) =
+      try List.find (fun (pa, _)-> pa = x) ls_n
+      with Not_found -> ("x", -1) in
+    let _ =
+      if (nb_x = -1) then
+	if (nb_xn = -1) then Printf.fprintf outc ""
+	else  Printf.fprintf outc " V%s = get(%d)," x nb_xn
+      else Printf.fprintf outc "" in
 
-       (*** x *)
-	 (*the name sent can either be a name not created, a name already created (i.e on the list)
-	   or a name received as an arg*)
-       let _ =
-	 if (nb_x = -1) then
-	   if (nb_xn = -1) then Printf.fprintf outc " %s})" x
-	   else
-	     Printf.fprintf outc " V%s})" x
-	 else Printf.fprintf outc " p%d })" nb_x in
+    (*** a *)
+    let (_, nb)=
+      try List.find (fun (pa, _)-> pa = a) ls
+      with Not_found -> ("x", -1) in
+    let _ =
+      if (nb = -1) then
+	(*if the a is not in the list then is given as argument
+          and it's in the list ls_n *)
+	let (_, nb_n) = List.find (fun (pa, _)-> pa = a) ls_n in
+	Printf.fprintf outc "V%s = get(%d), ( V%s ! {output,"  a nb_n a
+      else Printf.fprintf outc "(p%d ! {output," nb in
 
-	 ls
-    |Emp -> ls
+    (*** x *)
+    (*the name sent can either be a name not created,
+     a name already created (i.e on the list) or a name received as an arg*)
+    let _ =
+      if (nb_x = -1) then
+	if (nb_xn = -1) then Printf.fprintf outc " %s})" x
+	else
+	  Printf.fprintf outc " V%s})" x
+      else Printf.fprintf outc " p%d })" nb_x in
+    ls
+  |Emp -> ls
 
 (* add x as a new bound name if not already in *)
 let add_bound_name x ls ls_n =
   let len = List.length ls_n in
   let (_, nb_x)= try List.find (fun (pa, _)-> pa = x) ls
-  with Not_found -> ("x", -1) in
+                 with Not_found -> ("x", -1) in
     if (nb_x = -1) then
       let (_, nb_xn) = try List.find (fun (pa, _)-> pa = x) ls_n
       with Not_found -> ("x", -1) in
@@ -179,14 +205,18 @@ let build outc p =
   let () =  write_forevers outc p ls 0 0 [] in
     create_functions outc p ls 0 0 []
 
-let write_erlang_file filename original =
-    let outc = open_out filename in
-    let () = Printf.fprintf outc "## translating %s\n\n" original in
+let write_erlang_file original =
+    let outc = open_out (!output_file ^ ".erl") in
+    let () = Printf.fprintf outc "%c translating %s\n\n" '%' original;
+             Printf.fprintf outc "-module(%s).\n" !output_file;
+             Printf.fprintf outc "-compile(export_all).\n\n" in
     outc
 
+let test_proc = Tests.p2 ()
 
 let () =
-  let test1 = translate (Tests.p2 ()) in
-  let outc = write_erlang_file "test2" (Tests.p2 ()) in
-  let _ = build outc test1 in
+  let test = translate test_proc in
+  let () = output_file := "test2" in
+  let outc = write_erlang_file test_proc in
+  let _ = build outc test in
   flush outc; close_out outc
